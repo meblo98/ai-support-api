@@ -1,58 +1,160 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# API de support client
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+API REST Laravel de support client avec authentification par token, gestion de tickets et acces aux tickets par un assistant IA. Les outils de l'assistant sont egalement exposes a des clients externes via un serveur MCP.
 
-## About Laravel
+## Fonctionnalites
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- Inscription, connexion et deconnexion avec Laravel Sanctum.
+- CRUD des tickets, filtres par statut et priorite, pagination.
+- Autorisation basee sur le proprietaire du ticket.
+- Conversations IA persistantes et tool calling avec Laravel AI SDK.
+- Serveur MCP HTTP authentifie exposant les outils de tickets.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Technologies
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+- PHP 8.3 ou plus recent, Laravel 13.
+- Laravel Sanctum 4 pour l'authentification API.
+- Laravel AI SDK 1.2 pour le chat et les outils IA.
+- Laravel MCP 1.0 pour l'integration avec les clients MCP.
 
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+## Installation
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+composer install
+cp .env.example .env
+php artisan key:generate
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Configure la base de donnees dans `.env`. `.env.example` utilise SQLite par defaut; les pilotes MySQL et autres pilotes Laravel peuvent egalement etre configures.
 
-## Contributing
+Pour activer les appels au modele, renseigne la cle du fournisseur dans `.env`. OpenAI est le fournisseur par defaut :
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```dotenv
+OPENAI_API_KEY=your-api-key
+```
 
-## Code of Conduct
+Ne committe jamais cette cle. Le serveur MCP fonctionne independamment du fournisseur IA et ne necessite pas de cle OpenAI.
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Applique les migrations et demarre le serveur :
 
-## Security Vulnerabilities
+```bash
+php artisan migrate
+php artisan serve
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+L'API est disponible sur `http://127.0.0.1:8000`.
 
-## License
+## Donnees
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+- Un `User` possede plusieurs `Ticket`.
+- Un `Ticket` appartient a un utilisateur et possede plusieurs `TicketMessage`.
+- Un `TicketMessage` appartient a un ticket et peut etre associe a un utilisateur.
+- Les conversations du SDK sont stockees dans `agent_conversations` et `agent_conversation_messages`.
+
+Statuts de ticket : `open`, `pending`, `resolved`, `closed`.
+
+Priorites : `low`, `medium`, `high`, `urgent`.
+
+A la creation, le statut vaut `open` et la priorite `medium` si aucune valeur n'est fournie. Les messages de ticket disposent d'un modele et de relations Eloquent; aucune route REST dediee aux messages n'est exposee pour le moment.
+
+## Authentification
+
+Creer un compte :
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/register \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "Client Test",
+    "email": "client.test@example.com",
+    "password": "SupportTest2026!",
+    "password_confirmation": "SupportTest2026!"
+  }'
+```
+
+La reponse contient un token Sanctum. Garde-le dans une variable shell pour les commandes suivantes :
+
+```bash
+TOKEN='paste-token-here'
+```
+
+Se connecter a un compte existant : `POST /api/login` avec `email` et `password`. L'inscription et la connexion sont limitees a 5 requetes par minute. Les tokens emis possedent les capacites `tickets:read`, `tickets:write` et `ai:tools`.
+
+## API REST
+
+Toutes les routes ci-dessous, sauf `/api/register` et `/api/login`, necessitent l'en-tete `Authorization: Bearer <TOKEN>`.
+
+| Methode | Chemin | Description |
+| --- | --- | --- |
+| `POST` | `/api/register` | Creer un compte et emettre un token |
+| `POST` | `/api/login` | Se connecter et emettre un token |
+| `GET` | `/api/user` | Obtenir l'utilisateur connecte |
+| `POST` | `/api/logout` | Revoquer le token courant |
+| `GET` | `/api/tickets` | Lister ses tickets |
+| `POST` | `/api/tickets` | Creer un ticket |
+| `GET` | `/api/tickets/{ticket}` | Consulter un ticket |
+| `PATCH` | `/api/tickets/{ticket}` | Modifier un ticket |
+| `DELETE` | `/api/tickets/{ticket}` | Supprimer un ticket |
+
+Exemple de creation :
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/tickets \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "subject": "Paiement en double",
+    "description": "Deux prelevements ont ete faits pour ma commande.",
+    "priority": "urgent"
+  }'
+```
+
+Le `user_id` est toujours determine par le token, jamais par le corps de la requete. Les filtres de `GET /api/tickets` sont `status`, `priority` et `per_page` (1 a 100, 20 par defaut). Un utilisateur ne peut pas consulter les tickets d'un autre; un acces direct a un ticket qui ne lui appartient pas renvoie `404`.
+
+## Chat IA
+
+Le endpoint `POST /api/ai/chat` accepte `message` et un `conversation_id` facultatif. Sans identifiant, une nouvelle conversation est creee; avec un identifiant, elle est reprise si elle appartient a l'utilisateur authentifie.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/ai/chat \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "message": "Cree un ticket urgent pour un paiement en double."
+  }'
+```
+
+La reponse contient `message` et `conversation_id`. Pour continuer la conversation, envoie l'identifiant renvoye avec ton prochain message. L'assistant peut appeler `list_tickets`, `get_ticket` et `create_ticket`. `GET /api/ai/tools` retourne leurs schemas; `POST /api/ai/tools/{tool}` permet de les appeler directement avec `{ "arguments": { ... } }`. Le chat est limite a 10 requetes par minute. Sans cle de fournisseur, le chat renvoie `503`.
+
+## Serveur MCP
+
+Le serveur MCP HTTP est disponible a l'adresse :
+
+```text
+http://127.0.0.1:8000/mcp/support
+```
+
+Configure le client MCP avec cette URL et l'en-tete bearer `Authorization: Bearer <TOKEN>`. Le token doit inclure la capacite `ai:tools`. Le serveur expose trois outils :
+
+- `list_tickets` : lister les tickets de l'utilisateur, avec filtres facultatifs `status`, `priority` et `limit`.
+- `get_ticket` : consulter un ticket avec `ticket_id`.
+- `create_ticket` : creer un ticket avec `subject`, `description` et, en option, `status` et `priority`.
+
+Les outils utilisent l'utilisateur authentifie, valident les arguments et ne peuvent pas acceder aux tickets d'un autre utilisateur. Le endpoint MCP est limite a 60 requetes par minute. Pour l'inspecter localement, utilise `php artisan mcp:inspector mcp/support`.
+
+## Tests
+
+Lancer tous les tests :
+
+```bash
+php artisan test
+```
+
+La configuration PHPUnit utilise SQLite en memoire; les tests de fonctionnalite necessitent l'extension PHP `pdo_sqlite`. Pour lancer uniquement la suite unitaire :
+
+```bash
+php artisan test --testsuite=Unit
+```

@@ -2,8 +2,10 @@
 
 namespace Tests\Feature\Api;
 
+use App\Ai\Agents\SupportAgent;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Ai\Contracts\ConversationStore;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -114,5 +116,45 @@ class SupportApiTest extends TestCase
             'status' => 'in_progress',
         ])->assertUnprocessable()
             ->assertJsonValidationErrors('status');
+    }
+
+    public function test_chat_starts_a_persisted_conversation(): void
+    {
+        config()->set('ai.providers.openai.key', 'test-key');
+        SupportAgent::fake(['Votre ticket est bien pris en charge.'])->preventStrayPrompts();
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['ai:tools']);
+
+        $response = $this->postJson('/api/ai/chat', ['message' => 'Bonjour']);
+
+        $response->assertOk()
+            ->assertJsonPath('message', 'Votre ticket est bien pris en charge.')
+            ->assertJsonStructure(['conversation_id', 'message']);
+        SupportAgent::assertPrompted('Bonjour');
+        $this->assertDatabaseHas('agent_conversations', [
+            'id' => $response->json('conversation_id'),
+            'participant_id' => $user->id,
+        ]);
+    }
+
+    public function test_chat_cannot_continue_another_users_conversation(): void
+    {
+        config()->set('ai.providers.openai.key', 'test-key');
+        SupportAgent::fake()->preventStrayPrompts();
+        $owner = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $conversationId = app(ConversationStore::class)->storeConversation(
+            $owner->getMorphClass(),
+            $owner->getKey(),
+            'Conversation privée',
+        );
+        Sanctum::actingAs($otherUser, ['ai:tools']);
+
+        $this->postJson('/api/ai/chat', [
+            'message' => 'Montre-moi cette conversation',
+            'conversation_id' => $conversationId,
+        ])->assertNotFound();
+
+        SupportAgent::assertNeverPrompted();
     }
 }
